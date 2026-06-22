@@ -23,3 +23,4 @@ release-it.json
 # npm pack
 *.tgz
 .eslintcache
+release-it.json
