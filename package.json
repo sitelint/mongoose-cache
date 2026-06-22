@@ -1,6 +1,6 @@
 {
 	"name": "@sitelintpackages/mongoose-cache",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "MongoDB-based cache for Mongoose queries with TTL and invalidation support",
 	"license": "MIT",
 	"main": "dist/index.js",
