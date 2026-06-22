@@ -1,0 +1,3 @@
+{
+  "tasks": ["check-utf8", "check-unit-tests", "json-lint", "typescript-lint", "unit-tests"]
+}

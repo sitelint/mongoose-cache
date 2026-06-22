@@ -1,0 +1,8 @@
+.DS_Store
+**/*.png
+**/*.ico
+**/*.yaml
+dist
+reports
+README.md
+package-lock.json

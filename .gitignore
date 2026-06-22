@@ -1,0 +1,25 @@
+# Node artifacts
+node_modules/
+package-lock.json
+
+# Test reports
+reports/
+
+# IDE / editors
+.idea/
+.vscode/
+.vs/
+.sublimets
+.settings/
+.history
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Release
+release-it.json
+
+# npm pack
+*.tgz
+.eslintcache

@@ -1,0 +1,58 @@
+{
+	"name": "@sitelintpackages/mongoose-cache",
+	"version": "1.0.0",
+	"description": "MongoDB-based cache for Mongoose queries with TTL and invalidation support",
+	"license": "MIT",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": [
+		"dist/"
+	],
+	"scripts": {
+		"prebuild": "node build/ctlint/ctlint.cjs start --config ./ctlint.json --format-changed-files",
+		"build": "shx rm -rf dist && tsc -p .",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"lint": "eslint src/ --fix",
+		"test": "node --require ts-node/register --test '__tests__/**/*.spec.ts'",
+		"validate": "npm run ctlint",
+		"ctlint": "node build/ctlint/ctlint.cjs start --config ./ctlint.json",
+		"release": "release-it --config release-it.json"
+	},
+	"peerDependencies": {
+		"mongoose": ">=8.0.0"
+	},
+	"devDependencies": {
+		"@types/node": ">=20.0.0",
+		"@typescript-eslint/eslint-plugin": "8.61.1",
+		"@typescript-eslint/parser": "8.61.1",
+		"eslint": ">=9.0.0",
+		"eslint-config-prettier": ">=9.0.0",
+		"globals": "17.6.0",
+		"mongoose": ">=8.0.0",
+		"colors": ">=1.4.0",
+		"glob-all": ">=3.0.0",
+		"is-utf8": ">=0.2.0",
+    "release-it": "19.2.4",
+		"prettier": ">=3.0.0",
+		"shelljs": ">=0.8.0",
+		"shx": ">=0.3.0",
+		"ts-node": ">=10.0.0",
+		"typescript": ">=5.0.0"
+	},
+	"keywords": [
+		"mongoose",
+		"cache",
+		"mongodb",
+		"query-cache",
+		"aggregation-cache",
+		"ttl"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/sitelintpackages/mongoose-cache.git"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	}
+}
