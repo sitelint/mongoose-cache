@@ -28,11 +28,11 @@ The cache stores serialized query results directly in MongoDB under a dedicated 
  │       ▼                                              │
  │  Query.prototype.exec  (patched by cachePlugin)      │
  │       │                                              │
-  │       ├── cache HIT? ──── return cached result       │
-  │       │                                              │
-  │       ├── cache MISS ─── originalQuery.exec()        │
-  │       │       │                                      │
-  │       │       ├── MongoDB (source collection)        │
+ │       ├── cache HIT? ──── return cached result       │
+ │       │                                              │
+ │       ├── cache MISS ─── originalQuery.exec()        │
+ │       │       │                                      │
+ │       │       ├── MongoDB (source collection)        │
  │       │       │                                      │
  │       │       ▼                                      │
  │       └── CacheDb.writeCache(key, entry)             │
