@@ -10,6 +10,7 @@ export type CacheEntry = {
   meta: {
     cachedAt: number;
     collection: string;
+    dbName: string;
     populatedCollections?: string[];
     ttl: number;
   };
@@ -21,6 +22,8 @@ export type CacheEntry = {
  * Uses native MongoDB collections (bypassing Mongoose models to avoid recursive caching)
  * for safe concurrent access across multiple PM2 instances.
  *
+ * Supports multiple MongoDB databases — each database gets its own `_cache_entries` collection.
+ *
  * @export
  * @class CacheDb
  */
@@ -29,7 +32,7 @@ export class CacheDb {
 
   private static maxCacheSizeBytes: number | undefined;
   static readonly DEFAULT_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
-  private static db: mongoose.mongo.Db | null = null;
+  private static dbs: Map<string, mongoose.mongo.Db> = new Map();
 
   /**
    * Check if an error is a transient pool-cleared error that will resolve on retry.
@@ -48,60 +51,100 @@ export class CacheDb {
   }
 
   /**
-   * Get the MongoDB native Db instance.
-   * Returns null if no connection has been set yet (queries will bypass cache).
+   * Get the MongoDB native Db instance by database name.
+   * When dbName is not provided, returns the first registered db.
+   * Returns null if no connection has been registered yet.
    *
    * @private
    * @static
+   * @param {string} [dbName]
    * @returns {(mongoose.mongo.Db | null)}
    * @memberof CacheDb
    */
-  private static getDb(): mongoose.mongo.Db | null {
-    return CacheDb.db;
+  private static getDb(dbName?: string): mongoose.mongo.Db | null {
+    if (dbName) {
+      return CacheDb.dbs.get(dbName) || null;
+    }
+
+    const first = CacheDb.dbs.values().next();
+
+    return first.done ? null : first.value;
   }
 
   /**
-   * Get the native MongoDB collection for cache entries.
+   * Get all registered database names.
+   *
+   * @static
+   * @returns {string[]}
+   * @memberof CacheDb
+   */
+  public static getAllDbNames(): string[] {
+    return Array.from(CacheDb.dbs.keys());
+  }
+
+  /**
+   * Get the native MongoDB collection for cache entries in a specific database.
    *
    * @private
    * @static
+   * @param {string} [dbName]
    * @returns {(mongoose.mongo.Collection | null)}
    * @memberof CacheDb
    */
-  private static cacheCollection(): mongoose.mongo.Collection | null {
-    const db = CacheDb.getDb();
+  private static cacheCollection(dbName?: string): mongoose.mongo.Collection | null {
+    const db = CacheDb.getDb(dbName);
 
     return db ? db.collection(CacheDb.CACHE_COLLECTION) : null;
   }
 
   /**
-   * Set the MongoDB connection for the cache to use.
-   * Must be called after the connection is established.
+   * Extract the database name from a Mongoose connection.
+   *
+   * @private
+   * @static
+   * @param {mongoose.Connection} connection
+   * @returns {string}
+   * @memberof CacheDb
+   */
+  private static getDbNameFromConnection(connection: mongoose.Connection): string {
+    return connection.db.databaseName;
+  }
+
+  /**
+   * Register a MongoDB connection for the cache to use.
+   * Multiple connections to different databases can be registered;
+   * the database name from `connection.db.databaseName` is used as the key.
    *
    * @static
    * @param {mongoose.Connection} connection
    * @memberof CacheDb
    */
   public static setConnection(connection: mongoose.Connection): void {
+    const register = (): void => {
+      if (connection.db) {
+        const dbName = CacheDb.getDbNameFromConnection(connection);
+
+        CacheDb.dbs.set(dbName, connection.db);
+      }
+    };
+
     if (connection.db) {
-      CacheDb.db = connection.db;
+      register();
     } else {
       connection.once('open', (): void => {
-        CacheDb.db = connection.db;
+        register();
       });
     }
   }
 
   /**
-   * Clear the current MongoDB connection reference.
-   * Called when the connection is lost so cache operations don't
-   * use a stale connection pool.
+   * Clear all registered database connections.
    *
    * @static
    * @memberof CacheDb
    */
   public static clearConnection(): void {
-    CacheDb.db = null;
+    CacheDb.dbs.clear();
   }
 
   /**
@@ -116,44 +159,57 @@ export class CacheDb {
   }
 
   /**
-   * Initialize cache collections and create indexes.
+   * Initialize cache collections and create indexes for all registered databases.
    *
    * @static
    * @returns {Promise<void>}
    * @memberof CacheDb
    */
   public static async initializeCacheDB(): Promise<void> {
-    try {
-      const cacheCol = CacheDb.cacheCollection();
+    const dbNames = CacheDb.getAllDbNames();
 
-      if (!cacheCol) {
-        logger.warn('[CacheDb.initializeCacheDB] DB not ready, skipping index creation');
+    if (dbNames.length === 0) {
+      logger.warn('[CacheDb.initializeCacheDB] No DB connections registered, skipping index creation');
 
-        return;
-      }
-
-      // Index for looking up cache entries by collection name (for invalidation)
-      await cacheCol.createIndex({
-        'meta.collection': 1
-      });
-
-      // Index for looking up cache entries by populated collections (for cross-collection invalidation)
-      await cacheCol.createIndex({
-        'meta.populatedCollections': 1
-      });
-
-      // Clean up unused TTL index from a prior version (no callers set cacheTTL)
-      await cacheCol.dropIndex('expiresAt_1').catch(() => {});
-    } catch (err) {
-      logger.error('[CacheDb.initializeCacheDB]', err);
+      return;
     }
 
-    // Reset global cache hit counter
+    for (const dbName of dbNames) {
+      try {
+        const cacheCol = CacheDb.cacheCollection(dbName);
+
+        if (!cacheCol) {
+          continue;
+        }
+
+        // Index for looking up cache entries by collection name (for invalidation)
+        await cacheCol.createIndex({
+          'meta.collection': 1
+        });
+
+        // Index for looking up cache entries by populated collections (for cross-collection invalidation)
+        await cacheCol.createIndex({
+          'meta.populatedCollections': 1
+        });
+
+        // Index for looking up cache entries by database name
+        await cacheCol.createIndex({
+          'meta.dbName': 1
+        });
+
+        // Clean up unused TTL index from a prior version
+        await cacheCol.dropIndex('expiresAt_1').catch(() => {});
+      } catch (err) {
+        logger.error('[CacheDb.initializeCacheDB]', err);
+      }
+    }
+
     logger.countReset('Global cache hit');
   }
 
   /**
    * Generate a unique cache key for a Mongoose query.
+   * Includes database name to avoid collisions across databases.
    *
    * @static
    * @param {Query<any, any>} q
@@ -163,8 +219,9 @@ export class CacheDb {
   public static cacheKey(q: Query<any, any>): string {
     const query = JSON.stringify(q.getQuery());
     const col = q.model.collection.name;
+    const dbName = q.model.db.db.databaseName;
 
-    return crypto.createHash('sha1').update(`${col}:${query}`).digest('hex');
+    return crypto.createHash('sha1').update(`${dbName}:${col}:${query}`).digest('hex');
   }
 
   /**
@@ -172,11 +229,12 @@ export class CacheDb {
    *
    * @static
    * @param {string} key
+   * @param {string} [dbName]
    * @returns {(Promise<CacheEntry | null>)}
    * @memberof CacheDb
    */
-  public static async readCache(key: string): Promise<CacheEntry | null> {
-    const col = CacheDb.cacheCollection();
+  public static async readCache(key: string, dbName?: string): Promise<CacheEntry | null> {
+    const col = CacheDb.cacheCollection(dbName);
 
     if (!col) {
       return null;
@@ -213,11 +271,12 @@ export class CacheDb {
    * @static
    * @param {string} key
    * @param {CacheEntry} entry
+   * @param {string} [dbName]
    * @returns {Promise<void>}
    * @memberof CacheDb
    */
-  public static async writeCache(key: string, entry: CacheEntry): Promise<void> {
-    const cacheCol = CacheDb.cacheCollection();
+  public static async writeCache(key: string, entry: CacheEntry, dbName?: string): Promise<void> {
+    const cacheCol = CacheDb.cacheCollection(dbName);
 
     if (!cacheCol) {
       return;
@@ -225,7 +284,7 @@ export class CacheDb {
 
     if (typeof CacheDb.maxCacheSizeBytes === 'number') {
       try {
-        const db = CacheDb.getDb();
+        const db = CacheDb.getDb(dbName);
         const stats = db
           ? await db.command({
               collStats: CacheDb.CACHE_COLLECTION
@@ -280,13 +339,15 @@ export class CacheDb {
    * @template T
    * @param {string} collection
    * @param {T[]} pipeline
+   * @param {string} [dbName]
    * @returns {string}
    * @memberof CacheDb
    */
-  public static cacheKeyForAggregation<T>(collection: string, pipeline: T[]): string {
+  public static cacheKeyForAggregation<T>(collection: string, pipeline: T[], dbName?: string): string {
     const serialized: string = JSON.stringify(pipeline);
+    const dbPrefix = dbName ? `${dbName}:` : '';
 
-    return crypto.createHash('sha1').update(`${collection}:agg:${serialized}`).digest('hex');
+    return crypto.createHash('sha1').update(`${dbPrefix}${collection}:agg:${serialized}`).digest('hex');
   }
 
   /**
@@ -304,26 +365,46 @@ export class CacheDb {
   }
 
   /**
-   * Invalidate all cache entries for a given collection,
-   * including entries from other collections that populated this collection.
+   * Invalidate all cache entries for a given collection in a specific database
+   * or across all registered databases when dbName is not specified.
    *
    * @static
    * @param {string} collection
+   * @param {string} [dbName]
    * @returns {Promise<void>}
    * @memberof CacheDb
    */
-  public static async invalidateCollection(collection: string): Promise<void> {
-    const col = CacheDb.cacheCollection();
+  public static async invalidateCollection(collection: string, dbName?: string): Promise<void> {
+    if (dbName) {
+      await CacheDb.invalidateCollectionInDb(collection, dbName);
+    } else {
+      // When no dbName specified, invalidate across ALL registered databases
+      const dbNames = CacheDb.getAllDbNames();
+
+      for (const name of dbNames) {
+        await CacheDb.invalidateCollectionInDb(collection, name);
+      }
+    }
+  }
+
+  /**
+   * Invalidate cache entries for a collection in a specific database.
+   *
+   * @private
+   * @static
+   * @param {string} collection
+   * @param {string} dbName
+   * @returns {Promise<void>}
+   * @memberof CacheDb
+   */
+  private static async invalidateCollectionInDb(collection: string, dbName: string): Promise<void> {
+    const col = CacheDb.cacheCollection(dbName);
 
     if (!col) {
       return;
     }
 
     try {
-      /*
-       * Delete cache entries for this collection directly,
-       * OR entries that populated this collection (cross-collection invalidation)
-       */
       await col.deleteMany({
         $or: [
           {
@@ -345,15 +426,31 @@ export class CacheDb {
   }
 
   /**
-   * Sweep expired cache entries. With the MongoDB TTL index this is mostly a no-op,
-   * but we keep it for entries that may not have a TTL set.
+   * Sweep expired cache entries across all registered databases.
    *
    * @static
    * @returns {Promise<void>}
    * @memberof CacheDb
    */
   public static async sweepExpired(): Promise<void> {
-    const col = CacheDb.cacheCollection();
+    const dbNames = CacheDb.getAllDbNames();
+
+    for (const dbName of dbNames) {
+      await CacheDb.sweepExpiredInDb(dbName);
+    }
+  }
+
+  /**
+   * Sweep expired cache entries in a specific database.
+   *
+   * @private
+   * @static
+   * @param {string} dbName
+   * @returns {Promise<void>}
+   * @memberof CacheDb
+   */
+  private static async sweepExpiredInDb(dbName: string): Promise<void> {
+    const col = CacheDb.cacheCollection(dbName);
 
     if (!col) {
       return;
@@ -362,7 +459,6 @@ export class CacheDb {
     try {
       const now: number = Date.now();
 
-      // Remove entries where TTL has expired (belt-and-suspenders alongside the TTL index)
       await col.deleteMany({
         $expr: {
           $gt: [
@@ -387,7 +483,7 @@ export class CacheDb {
   }
 
   /**
-   * Initialize periodic tasks for cache sweeping.
+   * Initialize periodic tasks for cache sweeping across all registered databases.
    *
    * @static
    * @param {{
@@ -412,14 +508,41 @@ export class CacheDb {
   }
 
   /**
-   * Get current cache size in bytes from MongoDB collStats.
+   * Get current cache size in bytes from MongoDB collStats for a specific database
+   * or aggregated across all registered databases.
    *
    * @static
+   * @param {string} [dbName]
    * @returns {Promise<number>}
    * @memberof CacheDb
    */
-  public static async getCacheSize(): Promise<number> {
-    const db = CacheDb.getDb();
+  public static async getCacheSize(dbName?: string): Promise<number> {
+    if (dbName) {
+      return CacheDb.getCacheSizeForDb(dbName);
+    }
+
+    // Aggregate across all dbs
+    let total = 0;
+    const dbNames = CacheDb.getAllDbNames();
+
+    for (const name of dbNames) {
+      total += await CacheDb.getCacheSizeForDb(name);
+    }
+
+    return total;
+  }
+
+  /**
+   * Get cache size for a specific database.
+   *
+   * @private
+   * @static
+   * @param {string} dbName
+   * @returns {Promise<number>}
+   * @memberof CacheDb
+   */
+  private static async getCacheSizeForDb(dbName: string): Promise<number> {
+    const db = CacheDb.getDb(dbName);
 
     if (!db) {
       return 0;
@@ -444,6 +567,7 @@ export class CacheDb {
 
   /**
    * Get current cache statistics including size and max limit.
+   * Aggregates across all registered databases.
    *
    * @static
    * @returns {Promise<{ size: number; max?: number }>}
@@ -453,6 +577,22 @@ export class CacheDb {
     return {
       max: CacheDb.maxCacheSizeBytes,
       size: await CacheDb.getCacheSize()
+    };
+  }
+
+  /**
+   * Get statistics for a specific database.
+   *
+   * @static
+   * @param {string} dbName
+   * @returns {Promise<{ size: number; max?: number; dbName: string }>}
+   * @memberof CacheDb
+   */
+  public static async getCacheStatsForDb(dbName: string): Promise<{ size: number; max?: number; dbName: string }> {
+    return {
+      dbName,
+      max: CacheDb.maxCacheSizeBytes,
+      size: await CacheDb.getCacheSizeForDb(dbName)
     };
   }
 }

@@ -12,6 +12,7 @@ MongoDB-based cache for Mongoose queries with TTL and invalidation support. Uses
 - **Size limit** - configurable max cache size to prevent unbounded growth
 - **Periodic sweep** - background cleanup of expired entries
 - **Pool-cleared resilience** - gracefully handles transient `MongoPoolClearedError`
+- **Multiple databases** - register connections to different databases; each gets its own `_cache_entries` collection. Cache keys include the database name to avoid collisions.
 
 ## How it works
 
@@ -134,35 +135,58 @@ await User.updateOne({ _id: '...' }, { name: 'Bob' });
 // The cache for the "users" collection is cleared
 ```
 
+## Multiple databases
+
+When your app connects to more than one MongoDB database, register each connection:
+
+```ts
+import { CacheDb } from '@sitelintpackages/mongoose-cache';
+
+// Register both connections
+CacheDb.setConnection(auditConnection);  // stored under databaseName from connection
+CacheDb.setConnection(appConnection);    // same, stored separately
+
+// Initialize indexes in ALL registered databases
+await CacheDb.initializeCacheDB();
+```
+
+Each database gets its own `_cache_entries` collection. The `cachePlugin` automatically derives which database a query belongs to from the model's connection, so read/write operations target the correct database.
+
+- `cacheKey()` / `cacheKeyForAggregation()` include the database name in the hash — same query on different databases produces different cache keys.
+- `invalidateCollection(collection)` without `dbName` invalidates across **all** registered databases (safe default for external callers). Pass a `dbName` to target a specific one.
+- `initializeCacheDB()`, `sweepExpired()`, and `getCacheSize()` operate across all registered databases.
+- `CacheDb.getAllDbNames()` returns the list of registered database names.
+- `CacheDb.getCacheStatsForDb(dbName)` returns per-database cache statistics.
+
 ## API
 
 ### `CacheDb` (static class)
 
 #### `CacheDb.setConnection(connection: mongoose.Connection): void`
 
-Sets the MongoDB connection used for cache storage. Accepts both freshly-created connections and already-active ones:
+Registers a MongoDB connection for cache storage. Can be called multiple times to register connections to different databases — each is stored keyed by `connection.db.databaseName`.
 
-- If `connection.db` is already available (connection is open), uses it immediately.
+- If `connection.db` is already available (connection is open), registers it immediately.
 - If not yet available (connection is still opening), waits for the `open` event.
 
 Common patterns:
 
 ```ts
-// New connection
-const conn = await mongoose.createConnection(uri).asPromise();
-CacheDb.setConnection(conn);
-
-// Default connection (mongoose is already connected)
+// Single database
 CacheDb.setConnection(mongoose.connection);
 
-// Inside a disconnect handler (to clear the stale reference)
+// Multiple databases
+CacheDb.setConnection(auditConnection);
+CacheDb.setConnection(appConnection);
+
+// Disconnect/reconnect lifecycle
 connection.on('disconnected', CacheDb.clearConnection);
 connection.on('reconnected', CacheDb.setConnection.bind(CacheDb, connection));
 ```
 
 #### `CacheDb.initializeCacheDB(): Promise<void>`
 
-Creates the internal `_cache_entries` collection and builds indexes. Call once after `setConnection`.
+Creates the internal `_cache_entries` collection and builds indexes in **all registered databases**. Call once after all `setConnection()` calls.
 
 #### `CacheDb.configure(options: { maxCacheSizeBytes?: number }): void`
 
@@ -172,17 +196,32 @@ Sets an optional cache size limit. When the cache collection exceeds this limit,
 
 Starts a background timer that periodically sweeps expired entries. Default interval: 10 minutes.
 
-#### `CacheDb.invalidateCollection(collection: string): Promise<void>`
+#### `CacheDb.invalidateCollection(collection: string, dbName?: string): Promise<void>`
 
-Manually invalidate all cache entries for a given collection (including cross-collection entries from `.populate()`).
+Invalidate all cache entries for a given collection (including cross-collection entries from `.populate()`).
+
+- Without `dbName`: invalidates across **all** registered databases.
+- With `dbName`: targets a specific database.
 
 #### `CacheDb.clearConnection(): void`
 
-Clears the internal connection reference. Call on disconnect events.
+Clears all registered database connections. Call on disconnect events.
 
 #### `CacheDb.getCacheStats(): Promise<{ size: number; max?: number }>`
 
-Returns current cache size in bytes and the configured max limit.
+Returns current cache size in bytes (aggregated across all registered databases) and the configured max limit.
+
+#### `CacheDb.getCacheStatsForDb(dbName: string): Promise<{ size: number; max?: number; dbName: string }>`
+
+Returns cache statistics for a specific database.
+
+#### `CacheDb.getAllDbNames(): string[]`
+
+Returns the list of all registered database names.
+
+#### `CacheDb.getCacheSize(dbName?: string): Promise<number>`
+
+Returns cache size in bytes. Without `dbName`: aggregates across all databases. With `dbName`: for a specific database.
 
 #### `CacheDb.readCache(key: string): Promise<CacheEntry | null>`
 
@@ -247,8 +286,8 @@ Expired entries are removed by:
 
 ## Cache key generation
 
-- **Queries**: `SHA1(collectionName:JSON.stringify(query))` - same filter = same key
-- **Aggregations**: `SHA1(collectionName:agg:JSON.stringify(pipeline))`
+- **Queries**: `SHA1(databaseName:collectionName:JSON.stringify(query))` - same filter and database = same key
+- **Aggregations**: `SHA1(databaseName:collectionName:agg:JSON.stringify(pipeline))`
 
 ## Populate-aware invalidation
 

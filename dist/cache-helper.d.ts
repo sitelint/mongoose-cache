@@ -6,6 +6,8 @@ import { type Schema } from 'mongoose';
  * It automatically intercepts `.exec()` calls on supported operations and stores results
  * in a persistent cache layer with TTL and freshness tracking.
  *
+ * Supports multiple databases — each database gets its own `_cache_entries` collection.
+ *
  * ### Supported Query Operations:
  * - `find`, `findOne`, `findById`
  * - To enable caching, use `.set('useCache', true)` on the query.

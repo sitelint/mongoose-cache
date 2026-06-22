@@ -139,11 +139,22 @@ function extractPopulatedCollections(query) {
     return Array.from(collections);
 }
 /**
+ * Extract the database name from a Mongoose Model's connection.
+ *
+ * @param {mongoose.Model<any>} model
+ * @returns {string}
+ */
+function getDbNameFromModel(model) {
+    return model.db.db.databaseName;
+}
+/**
  * Apply caching plugin to Mongoose schema and patch prototypes once.
  *
  * This plugin enables disk-based caching for Mongoose queries and aggregations.
  * It automatically intercepts `.exec()` calls on supported operations and stores results
  * in a persistent cache layer with TTL and freshness tracking.
+ *
+ * Supports multiple databases — each database gets its own `_cache_entries` collection.
  *
  * ### Supported Query Operations:
  * - `find`, `findOne`, `findById`
@@ -185,9 +196,10 @@ function cachePlugin(schema) {
     if (typeof schema.post === 'function') {
         schema.post('save', async function () {
             const col = this.collection.name;
+            const dbName = getDbNameFromModel(this.constructor);
             try {
-                await cache_db_service_1.CacheDb.invalidateCollection(col);
-                logger_1.default.debug(`Cache invalidated via save for collection: ${col}`);
+                await cache_db_service_1.CacheDb.invalidateCollection(col, dbName);
+                logger_1.default.debug(`Cache invalidated via save for collection: ${col} (db: ${dbName})`);
                 logger_1.default.countReset(`Global cache hit: ${col}`);
                 logger_1.default.countReset(`Aggregate cache hit: ${col}`);
             }
@@ -220,6 +232,7 @@ function cachePlugin(schema) {
             ]);
             const op = this.op;
             const col = this.model.collection.name;
+            const dbName = getDbNameFromModel(this.model);
             // Handle destructive operations
             if (destructiveOps.has(op)) {
                 let res;
@@ -231,8 +244,8 @@ function cachePlugin(schema) {
                     return new Error(`[CacheDb.cachePlugin] Query.exec: ${err.message}`);
                 }
                 try {
-                    await cache_db_service_1.CacheDb.invalidateCollection(col);
-                    logger_1.default.debug(`Cache invalidated for collection: ${col}`);
+                    await cache_db_service_1.CacheDb.invalidateCollection(col, dbName);
+                    logger_1.default.debug(`Cache invalidated for collection: ${col} (db: ${dbName})`);
                     logger_1.default.countReset(`Global cache hit: ${col}`);
                     logger_1.default.countReset(`Aggregate cache hit: ${col}`);
                 }
@@ -257,7 +270,7 @@ function cachePlugin(schema) {
             const key = cache_db_service_1.CacheDb.cacheKey(this);
             let cached = null;
             try {
-                cached = await cache_db_service_1.CacheDb.readCache(key);
+                cached = await cache_db_service_1.CacheDb.readCache(key, dbName);
             }
             catch (err) {
                 logger_1.default.error('[CacheDb.cachePlugin] CacheDb.readCache', err);
@@ -281,6 +294,7 @@ function cachePlugin(schema) {
                 meta: {
                     cachedAt: now,
                     collection: col,
+                    dbName,
                     populatedCollections: populatedCollections.length > 0 ? populatedCollections : undefined,
                     ttl
                 }
@@ -289,7 +303,7 @@ function cachePlugin(schema) {
                 logger_1.default.debug(`[Cache] Storing cache for ${col} with populated: ${populatedCollections.join(', ')}`);
             }
             try {
-                await cache_db_service_1.CacheDb.writeCache(key, entry);
+                await cache_db_service_1.CacheDb.writeCache(key, entry, dbName);
             }
             catch (err) {
                 logger_1.default.error('[CacheDb.cachePlugin] CacheDb.writeCache', err);
@@ -311,7 +325,8 @@ function cachePlugin(schema) {
              */
             const useCacheAtPatchTime = agg.options?.useCache;
             const col = this.collection.name;
-            logger_1.default.debug(`[Aggregate] Model.aggregate called on "${col}" | useCache at patch-time: ${useCacheAtPatchTime}`);
+            const dbName = getDbNameFromModel(this);
+            logger_1.default.debug(`[Aggregate] Model.aggregate called on "${col}" (db: ${dbName}) | useCache at patch-time: ${useCacheAtPatchTime}`);
             // If useCache is explicitly false at patch-time, skip patching exec entirely.
             if (useCacheAtPatchTime === false) {
                 logger_1.default.debug(`[Aggregate] Caching disabled (useCache=false) for "${col}" — skipping exec patch`);
@@ -338,7 +353,7 @@ function cachePlugin(schema) {
                 if (typeof ttl === 'undefined') {
                     ttl = cache_db_service_1.CacheDb.DEFAULT_TTL;
                 }
-                const key = cache_db_service_1.CacheDb.cacheKeyForAggregation(col, args);
+                const key = cache_db_service_1.CacheDb.cacheKeyForAggregation(col, args, dbName);
                 const isWriteOp = cache_db_service_1.CacheDb.isWriteAggregation(args[0]);
                 logger_1.default.debug(`[Aggregate] key="${key}" | isWriteOp=${isWriteOp}`);
                 // Handle write aggregations - execute and invalidate, but don't cache
@@ -353,8 +368,8 @@ function cachePlugin(schema) {
                         return new Error(`[CacheDb.aggregate] agg.exec: ${err.message}`);
                     }
                     try {
-                        await cache_db_service_1.CacheDb.invalidateCollection(col);
-                        logger_1.default.debug(`Cache invalidated via aggregation for collection: ${col}`);
+                        await cache_db_service_1.CacheDb.invalidateCollection(col, dbName);
+                        logger_1.default.debug(`Cache invalidated via aggregation for collection: ${col} (db: ${dbName})`);
                         logger_1.default.countReset(`Global cache hit: ${col}`);
                         logger_1.default.countReset(`Aggregate cache hit: ${col}`);
                     }
@@ -366,7 +381,7 @@ function cachePlugin(schema) {
                 // Handle read aggregations - use cache
                 let cached = null;
                 try {
-                    cached = await cache_db_service_1.CacheDb.readCache(key);
+                    cached = await cache_db_service_1.CacheDb.readCache(key, dbName);
                 }
                 catch (err) {
                     logger_1.default.error('[CacheDb.aggregate] CacheDb.readCache', err);
@@ -391,11 +406,12 @@ function cachePlugin(schema) {
                     meta: {
                         cachedAt: now,
                         collection: col,
+                        dbName,
                         ttl
                     }
                 };
                 try {
-                    await cache_db_service_1.CacheDb.writeCache(key, entry);
+                    await cache_db_service_1.CacheDb.writeCache(key, entry, dbName);
                 }
                 catch (err) {
                     logger_1.default.error('[CacheDb.aggregate] CacheDb.writeCache', err);
@@ -410,6 +426,7 @@ function cachePlugin(schema) {
         const originalInsertMany = mongoose_1.default.Model.insertMany;
         mongoose_1.default.Model.insertMany = async function (docs, options) {
             const col = this.collection.name;
+            const dbName = getDbNameFromModel(this);
             let res;
             try {
                 res = await originalInsertMany.call(this, docs, options);
@@ -419,8 +436,8 @@ function cachePlugin(schema) {
                 throw err;
             }
             try {
-                await cache_db_service_1.CacheDb.invalidateCollection(col);
-                logger_1.default.debug(`Cache invalidated via insertMany for collection: ${col}`);
+                await cache_db_service_1.CacheDb.invalidateCollection(col, dbName);
+                logger_1.default.debug(`Cache invalidated via insertMany for collection: ${col} (db: ${dbName})`);
                 logger_1.default.countReset(`Global cache hit: ${col}`);
                 logger_1.default.countReset(`Aggregate cache hit: ${col}`);
             }
@@ -436,6 +453,7 @@ function cachePlugin(schema) {
         const originalBulkWrite = mongoose_1.default.Model.bulkWrite;
         mongoose_1.default.Model.bulkWrite = async function (writes, options) {
             const col = this.collection.name;
+            const dbName = getDbNameFromModel(this);
             let res;
             try {
                 res = await originalBulkWrite.call(this, writes, options);
@@ -445,8 +463,8 @@ function cachePlugin(schema) {
                 throw err;
             }
             try {
-                await cache_db_service_1.CacheDb.invalidateCollection(col);
-                logger_1.default.debug(`Cache invalidated via bulkWrite for collection: ${col}`);
+                await cache_db_service_1.CacheDb.invalidateCollection(col, dbName);
+                logger_1.default.debug(`Cache invalidated via bulkWrite for collection: ${col} (db: ${dbName})`);
                 logger_1.default.countReset(`Global cache hit: ${col}`);
                 logger_1.default.countReset(`Aggregate cache hit: ${col}`);
             }
