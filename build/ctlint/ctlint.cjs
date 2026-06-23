@@ -20,11 +20,8 @@ const taskUtil = require('./utils/task.js');
 
 let singleTaskName;
 
-// Console colors
-require('colors');
-
 function exitError(message) {
-  console.error(message.bgRed + '\n');
+  console.error(styleText('bgRed', styleText('white', 'CTLint error:')), `${message}\n`);
 
   const EXIT_UNCAUGHT_FATAL_EXCEPTION = 1;
 
