@@ -20,20 +20,19 @@
     "release": "release-it --config release-it.json"
   },
   "peerDependencies": {
-    "mongoose": ">=8.0.0"
+    "mongoose": ">=9.0.0"
   },
   "devDependencies": {
     "@types/node": ">=26.0.0",
-    "@typescript-eslint/eslint-plugin": "8.62.0",
-    "@typescript-eslint/parser": "8.62.0",
+    "@typescript-eslint/eslint-plugin": ">=8.62.0",
+    "@typescript-eslint/parser": ">=8.62.0",
     "eslint": ">=10.5.0",
     "eslint-config-prettier": ">=10.1.8",
-    "globals": "17.7.0",
+    "globals": ">=17.7.0",
     "mongoose": ">=9.7.2",
-    "colors": ">=1.4.0",
     "glob-all": ">=3.3.1",
     "is-utf8": ">=0.2.1",
-    "release-it": "20.2.0",
+    "release-it": ">=20.2.0",
     "prettier": ">=3.8.4",
     "shelljs": ">=0.10.0",
     "shx": ">=0.4.0",
