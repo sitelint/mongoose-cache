@@ -400,6 +400,47 @@ class CacheDb {
         }
     }
     /**
+     * Clear all cache entries across all registered databases.
+     * Call this on application startup to ensure stale cached query results
+     * from previous deployments are purged.
+     *
+     * @static
+     * @returns {Promise<void>}
+     * @memberof CacheDb
+     */
+    static async clearAllCache() {
+        const dbNames = CacheDb.getAllDbNames();
+        for (const dbName of dbNames) {
+            await CacheDb.clearAllCacheInDb(dbName);
+        }
+    }
+    /**
+     * Clear all cache entries in a specific database.
+     *
+     * @private
+     * @static
+     * @param {string} dbName
+     * @returns {Promise<void>}
+     * @memberof CacheDb
+     */
+    static async clearAllCacheInDb(dbName) {
+        const col = CacheDb.cacheCollection(dbName);
+        if (!col) {
+            return;
+        }
+        try {
+            const result = await col.deleteMany({});
+            logger_1.default.log(`[CacheDb.clearAllCache] Cleared ${result.deletedCount} cache entries from database: ${dbName}`);
+        }
+        catch (err) {
+            if (CacheDb.isTransientPoolError(err)) {
+                logger_1.default.warn('[CacheDb.clearAllCache] Connection pool cleared, will retry on next startup');
+                return;
+            }
+            logger_1.default.error('[CacheDb.clearAllCache]', err);
+        }
+    }
+    /**
      * Sweep expired cache entries across all registered databases.
      *
      * @static

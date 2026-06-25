@@ -465,6 +465,83 @@ describe('#CacheDb', () => {
     });
   });
 
+  describe('#clearAllCache', () => {
+    it('should return early when no db connection is set', async () => {
+      await assert.doesNotReject(() => CacheDb.clearAllCache());
+    });
+
+    it('should clear cache across all registered databases', async () => {
+      const mockCol1 = createMockCollection({
+        deleteMany: mock.fn(() => Promise.resolve({ deletedCount: 5 }))
+      });
+      const mockCol2 = createMockCollection({
+        deleteMany: mock.fn(() => Promise.resolve({ deletedCount: 3 }))
+      });
+      const auditDb = createMockDb('auditDb');
+      const appDb = createMockDb('appDb');
+
+      (auditDb.collection as any).mock.mockImplementation(() => mockCol1);
+      (appDb.collection as any).mock.mockImplementation(() => mockCol2);
+
+      CacheDb.setConnection({ db: auditDb } as unknown as mongoose.Connection);
+      CacheDb.setConnection({ db: appDb } as unknown as mongoose.Connection);
+
+      await CacheDb.clearAllCache();
+
+      assert.strictEqual(mockCol1.deleteMany.mock.calls.length, 1);
+      assert.strictEqual(mockCol2.deleteMany.mock.calls.length, 1);
+    });
+
+    it('should clear with empty filter to delete all entries', async () => {
+      const mockCol = createMockCollection({
+        deleteMany: mock.fn(() => Promise.resolve({ deletedCount: 10 }))
+      });
+      const mockDb = createMockDb('appDb');
+
+      (mockDb.collection as any).mock.mockImplementation(() => mockCol);
+
+      const connection = { db: mockDb } as unknown as mongoose.Connection;
+
+      CacheDb.setConnection(connection);
+
+      await CacheDb.clearAllCache();
+
+      assert.strictEqual(mockCol.deleteMany.mock.calls.length, 1);
+      const callArgs: any[] = (mockCol.deleteMany as any).mock.calls[0].arguments;
+      assert.deepStrictEqual(callArgs[0], {});
+    });
+
+    it('should handle MongoPoolClearedError gracefully', async () => {
+      const mockCol = createMockCollection({
+        deleteMany: mock.fn(() => Promise.reject(createPoolClearedError()))
+      });
+      const mockDb = createMockDb('appDb');
+
+      (mockDb.collection as any).mock.mockImplementation(() => mockCol);
+
+      const connection = { db: mockDb } as unknown as mongoose.Connection;
+
+      CacheDb.setConnection(connection);
+
+      await assert.doesNotReject(() => CacheDb.clearAllCache());
+    });
+
+    it('should handle generic errors without throwing', async () => {
+      const mockCol = createMockCollection({
+        deleteMany: mock.fn(() => Promise.reject(new Error('Generic DB error')))
+      });
+      const mockDb = createMockDb('appDb');
+
+      (mockDb.collection as any).mock.mockImplementation(() => mockCol);
+
+      const connection = { db: mockDb } as unknown as mongoose.Connection;
+
+      CacheDb.setConnection(connection);
+
+      await assert.doesNotReject(() => CacheDb.clearAllCache());
+    });
+  });
+
   describe('#sweepExpired', () => {
     it('should return early when no db connection is set', async () => {
       await assert.doesNotReject(() => CacheDb.sweepExpired());

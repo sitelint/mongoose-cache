@@ -203,6 +203,10 @@ Invalidate all cache entries for a given collection (including cross-collection 
 - Without `dbName`: invalidates across **all** registered databases.
 - With `dbName`: targets a specific database.
 
+#### `CacheDb.clearAllCache(): Promise<void>`
+
+Clears **all** cache entries across all registered databases. Useful for application startup to purge stale cached results from previous deployments.
+
 #### `CacheDb.clearConnection(): void`
 
 Clears all registered database connections. Call on disconnect events.
@@ -308,6 +312,34 @@ import { logger } from '@sitelint/mongoose-cache'; // or require('@sitelint/mong
 // Not currently exposed - debug is no-op by default
 // To enable, you can reassign after import if needed
 ```
+
+## Best Practices
+
+### Clear cache on application startup
+
+Cache entries persist in MongoDB across application restarts and deployments. When you deploy code changes that alter query logic, `select` projections, or populate chains, cached results from the previous deployment become stale and may omit fields added in the new code.
+
+Call `CacheDb.clearAllCache()` after `initializeCacheDB()` on startup to ensure all queries execute fresh against the current codebase:
+
+```ts
+await CacheDb.initializeCacheDB();
+await CacheDb.clearAllCache();
+```
+
+This is safe to call in every process (main app, workers, microservices). Each call clears only the databases registered via `setConnection()` on that process. There is no performance penalty as the cache repopulates naturally as queries run.
+
+When to clear:
+
+- **Always** on deployment - prevents stale cache from serving old query shapes.
+- **After schema migrations** - indices, field additions/removals change query results.
+- **After changing `select()` or `populate()` projections** - cached results will have the old projection.
+- **After changing cache TTL strategy** - ensures new TTL values apply uniformly.
+
+When you **don't** need to clear:
+
+- Routine server restarts with no code changes (the cache is still valid).
+- Adding new collections or models (existing cache entries are unaffected).
+- Bug fixes that don't alter query outputs (cache remains consistent).
 
 ## License
 

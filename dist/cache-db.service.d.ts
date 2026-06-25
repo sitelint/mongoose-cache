@@ -185,6 +185,26 @@ export declare class CacheDb {
      */
     private static invalidateCollectionInDb;
     /**
+     * Clear all cache entries across all registered databases.
+     * Call this on application startup to ensure stale cached query results
+     * from previous deployments are purged.
+     *
+     * @static
+     * @returns {Promise<void>}
+     * @memberof CacheDb
+     */
+    static clearAllCache(): Promise<void>;
+    /**
+     * Clear all cache entries in a specific database.
+     *
+     * @private
+     * @static
+     * @param {string} dbName
+     * @returns {Promise<void>}
+     * @memberof CacheDb
+     */
+    private static clearAllCacheInDb;
+    /**
      * Sweep expired cache entries across all registered databases.
      *
      * @static

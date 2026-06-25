@@ -33,9 +33,7 @@ function getTask(taskName) {
 }
 
 function wrapTask(fn) {
-  return function () {
-    return new Promise(fn);
-  };
+  return () => new Promise(fn);
 }
 
 function onCompleted() {
@@ -66,7 +64,7 @@ function getSingleTaskName(args) {
 
 /*
  * Note: the arguments must be passed in a way -- task-name
- * Example: node build/ctlint/ctlint.cjs start -- process-dashboard-translations
+ * Example: node build/ctlint/ctlint.cjs start -- typescript-lint
  */
 async function start() {
   let tasks;
