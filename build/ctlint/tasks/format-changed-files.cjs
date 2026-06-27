@@ -1,4 +1,5 @@
 /* eslint-disable no-sync */
+const fs = require('node:fs');
 const path = require('node:path');
 const shell = require('shelljs');
 
@@ -41,13 +42,15 @@ function action(resolve, reject) {
   }
 
   const files = lines
+    .filter((line) => !line.slice(0, 2).includes('D'))
     .map((line) => {
       const filePath = line.slice(3).trim();
       const arrowIndex = filePath.indexOf(' -> ');
 
       return arrowIndex > -1 ? filePath.slice(arrowIndex + 4) : filePath;
     })
-    .filter((filePath) => /\.(ts|js|mjs|cjs)$/i.test(filePath));
+    .filter((filePath) => /\.(ts|js|mjs|cjs)$/i.test(filePath))
+    .filter((filePath) => fs.existsSync(filePath));
 
   if (files.length === 0) {
     task.success(taskName);
