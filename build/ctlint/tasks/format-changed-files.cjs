@@ -8,6 +8,27 @@ const commonUtils = require('../utils/common.js');
 const constants = require('../constants');
 const taskName = commonUtils.getTaskName(__filename);
 
+function restoreCwd(originalCwd) {
+  shell.cd(originalCwd);
+}
+
+function resolvePrettierPath(baseDir) {
+  const prettierPath = shell.which('prettier');
+
+  if (prettierPath) {
+    return prettierPath;
+  }
+
+  const localPrettierPath = path.resolve(
+    baseDir,
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'prettier.cmd' : 'prettier'
+  );
+
+  return fs.existsSync(localPrettierPath) ? localPrettierPath : null;
+}
+
 function action(resolve, reject) {
   task.timeStart(taskName);
 
@@ -21,11 +42,14 @@ function action(resolve, reject) {
     return;
   }
 
+  const originalCwd = process.cwd();
+
   shell.cd(rootResult.stdout.trim());
 
   const statusResult = shell.exec('git status --porcelain', { silent: true });
 
   if (statusResult.code !== constants.EXIT_SUCCESS) {
+    restoreCwd(originalCwd);
     reject(`[${taskName}] Git status failed`);
 
     return;
@@ -34,6 +58,7 @@ function action(resolve, reject) {
   const lines = statusResult.stdout.split('\n').filter(Boolean);
 
   if (lines.length === 0) {
+    restoreCwd(originalCwd);
     task.success(taskName);
     task.timeEnd(taskName);
     resolve();
@@ -53,6 +78,7 @@ function action(resolve, reject) {
     .filter((filePath) => fs.existsSync(filePath));
 
   if (files.length === 0) {
+    restoreCwd(originalCwd);
     task.success(taskName);
     task.timeEnd(taskName);
     resolve();
@@ -60,10 +86,20 @@ function action(resolve, reject) {
     return;
   }
 
-  const prettierPath = path.join(process.cwd(), 'node_modules', '.bin', 'prettier');
+  const prettierPath = resolvePrettierPath(originalCwd);
+
+  if (!prettierPath) {
+    restoreCwd(originalCwd);
+    reject(`[${taskName}] prettier not found`);
+
+    return;
+  }
+
   const prettierResult = shell.exec(`"${prettierPath}" --write ${files.map((f) => `"${f}"`).join(' ')}`, {
     silent: true
   });
+
+  restoreCwd(originalCwd);
 
   if (prettierResult.code !== constants.EXIT_SUCCESS) {
     reject(`[${taskName}] Prettier failed: ${prettierResult.stderr}`);
