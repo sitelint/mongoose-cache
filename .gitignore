@@ -17,9 +17,6 @@ reports/
 .DS_Store
 Thumbs.db
 
-# Release
-release-it.json
-
 # npm pack
 *.tgz
 .eslintcache
