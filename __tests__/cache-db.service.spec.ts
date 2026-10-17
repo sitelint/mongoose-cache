@@ -617,20 +617,73 @@ describe('#CacheDb', () => {
   });
 
   describe('#initializePeriodTasks', () => {
+    let scheduleSweep: (() => Promise<void>) | undefined;
+
     afterEach(() => {
       mock.method(globalThis, 'setImmediate');
+      mock.method(globalThis, 'setTimeout');
+      mock.method(CacheDb, 'sweepExpired');
+      scheduleSweep = undefined;
       CacheDb.clearConnection();
     });
 
     it('should call setImmediate with a function', () => {
       const setImmediateSpy = mock.method(globalThis, 'setImmediate', (fn: Function) => {
-        return 1 as unknown as NodeJS.Immediate;
+        scheduleSweep = fn as () => Promise<void>;
+        return { ref: () => {}, unref: () => {} } as unknown as NodeJS.Immediate;
       });
 
       CacheDb.initializePeriodTasks({ sweepIntervalMs: 5000 });
 
       assert.strictEqual(setImmediateSpy.mock.calls.length, 1);
       assert.strictEqual(typeof (setImmediateSpy as any).mock.calls[0].arguments[0], 'function');
+    });
+
+    it('should unref the setImmediate handle so the sweep does not pin the event loop', () => {
+      let immediateUnrefCalled = false;
+      mock.method(globalThis, 'setImmediate', (fn: Function) => {
+        return {
+          ref: () => {},
+          unref: () => {
+            immediateUnrefCalled = true;
+          }
+        } as unknown as NodeJS.Immediate;
+      });
+
+      CacheDb.initializePeriodTasks({ sweepIntervalMs: 5000 });
+
+      assert.ok(immediateUnrefCalled);
+    });
+
+    it('should unref the re-armed setTimeout handle so the sweep does not pin the event loop', async () => {
+      let sweepExpiredCalls = 0;
+      mock.method(CacheDb, 'sweepExpired', async () => {
+        sweepExpiredCalls += 1;
+        return undefined;
+      });
+      let timeoutUnrefCalled = false;
+      const setTimeoutSpy = mock.method(globalThis, 'setTimeout', (fn: Function, ms: number) => {
+        return {
+          ref: () => {},
+          unref: () => {
+            timeoutUnrefCalled = true;
+          }
+        } as unknown as NodeJS.Timeout;
+      });
+      mock.method(globalThis, 'setImmediate', (fn: Function) => {
+        scheduleSweep = fn as () => Promise<void>;
+        return { ref: () => {}, unref: () => {} } as unknown as NodeJS.Immediate;
+      });
+
+      CacheDb.initializePeriodTasks({ sweepIntervalMs: 5000 });
+
+      assert.ok(scheduleSweep);
+      await scheduleSweep();
+
+      assert.strictEqual(sweepExpiredCalls, 1);
+      assert.strictEqual(setTimeoutSpy.mock.calls.length, 1);
+      assert.strictEqual(setTimeoutSpy.mock.calls[0].arguments[1], 5000);
+      assert.ok(timeoutUnrefCalled);
     });
   });
 

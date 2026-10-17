@@ -547,11 +547,13 @@ export class CacheDb {
       } catch (err) {
         logger.error('[CacheDb.scheduleSweep] Failed', err);
       } finally {
-        globalThis.setTimeout(scheduleSweep, sweepIntervalMs);
+        const sweepTimeout = globalThis.setTimeout(scheduleSweep, sweepIntervalMs);
+        sweepTimeout.unref();
       }
     };
 
-    globalThis.setImmediate(scheduleSweep);
+    const sweepImmediate = globalThis.setImmediate(scheduleSweep);
+    sweepImmediate.unref();
   }
 
   /**

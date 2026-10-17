@@ -510,10 +510,12 @@ class CacheDb {
                 logger_1.default.error('[CacheDb.scheduleSweep] Failed', err);
             }
             finally {
-                globalThis.setTimeout(scheduleSweep, sweepIntervalMs);
+                const sweepTimeout = globalThis.setTimeout(scheduleSweep, sweepIntervalMs);
+                sweepTimeout.unref();
             }
         };
-        globalThis.setImmediate(scheduleSweep);
+        const sweepImmediate = globalThis.setImmediate(scheduleSweep);
+        sweepImmediate.unref();
     }
     /**
      * Get current cache size in bytes from MongoDB collStats for a specific database
