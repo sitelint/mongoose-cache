@@ -15,11 +15,8 @@ function action(resolve, reject) {
   task.timeStart(taskName);
 
   const MAXIMUM_AMOUNT_OF_PENDING_UNIT_TESTS = 10;
-
   const forbiddenMethods = ['describe.only', 'it.only', 'test.only'];
-
   const pendingMethods = ['describe.skip', 'xdescribe', 'it.skip', 'xit', 'test.skip', 'xtest'];
-
   const filesWithForbiddenRules = [];
   const filesWithPendingRules = [];
 
